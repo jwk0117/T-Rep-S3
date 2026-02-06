@@ -16,6 +16,7 @@ def hierarchical_contrastive_loss(
         tembed_pred_task_head,
         weights, 
         temporal_unit=0,
+        return_components=False,
     ):
     """
         Applies the losses of all pretext tasks hierarchically,
@@ -35,20 +36,34 @@ def hierarchical_contrastive_loss(
         The loss aggregated over all pretext tasks and time scales.
     """
     loss = torch.tensor(0., device=h1.device)
+    component_losses = {
+        'instance_contrast': torch.tensor(0., device=h1.device),
+        'temporal_contrast': torch.tensor(0., device=h1.device),
+        'tembed_jsd_pred': torch.tensor(0., device=h1.device),
+        'tembed_cond_pred': torch.tensor(0., device=h1.device),
+    }
     d = 0
     while h1.size(1) > 1:
         if weights['instance_contrast'] != 0:
-            loss += weights['instance_contrast'] * instance_contrastive_loss(h1, h2)
+            instance_loss = weights['instance_contrast'] * instance_contrastive_loss(h1, h2)
+            loss += instance_loss
+            component_losses['instance_contrast'] += instance_loss
         if d >= temporal_unit:
             if weights['tembed_jsd_pred'] != 0:
                 jsd_loss = tembed_jsd_pred_loss(h1, h2, tau1, tau2, tembed_jsd_task_head)
-                loss += weights['tembed_jsd_pred'] * jsd_loss
+                weighted_jsd_loss = weights['tembed_jsd_pred'] * jsd_loss
+                loss += weighted_jsd_loss
+                component_losses['tembed_jsd_pred'] += weighted_jsd_loss
             if weights['temporal_contrast'] != 0:
                 t_loss = temporal_contrastive_loss(h1, h2)
-                loss += weights['temporal_contrast'] * t_loss 
+                weighted_t_loss = weights['temporal_contrast'] * t_loss
+                loss += weighted_t_loss
+                component_losses['temporal_contrast'] += weighted_t_loss
             if weights['tembed_cond_pred'] != 0:
                 pred_loss = tembed_cond_pred_loss(h1, h2, tau1, tau2, tembed_pred_task_head) 
-                loss += weights['tembed_cond_pred'] * pred_loss
+                weighted_pred_loss = weights['tembed_cond_pred'] * pred_loss
+                loss += weighted_pred_loss
+                component_losses['tembed_cond_pred'] += weighted_pred_loss
 
         d += 1
         h1 = F.max_pool1d(h1.transpose(1, 2), kernel_size=2).transpose(1, 2)
@@ -60,9 +75,16 @@ def hierarchical_contrastive_loss(
 
     if h1.size(1) == 1:
         if weights['instance_contrast'] != 0:
-            loss += weights['instance_contrast'] * instance_contrastive_loss(h1, h2)
+            instance_loss = weights['instance_contrast'] * instance_contrastive_loss(h1, h2)
+            loss += instance_loss
+            component_losses['instance_contrast'] += instance_loss
         d += 1
-    return loss / d
+    loss = loss / d
+    for key in component_losses:
+        component_losses[key] = component_losses[key] / d
+    if return_components:
+        return loss, component_losses
+    return loss
 
 def instance_contrastive_loss(h1, h2):
     """
