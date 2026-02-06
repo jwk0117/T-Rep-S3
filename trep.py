@@ -94,8 +94,9 @@ class TRep:
         self.n_iters = 0
         self.loss_log = []
         self.component_loss_log = {key: [] for key in self.task_weights}
+        self.optimizer_state = None
     
-    def fit(self, train_data, n_epochs=None, n_iters=None, verbose=0):
+    def fit(self, train_data, n_epochs=None, n_iters=None, verbose=0, callback=None):
         ''' Training the TRep model.
         
         Args:
@@ -103,6 +104,8 @@ class TRep:
             n_epochs (Union[int, NoneType]): The number of epochs. When this reaches, the training stops.
             n_iters (Union[int, NoneType]): The number of iterations. When this reaches, the training stops. If both n_epochs and n_iters are not specified, a default setting would be used that sets n_iters to 200 for a dataset with size <= 100000, 600 otherwise.
             verbose (bool): Whether to print the training loss after each epoch.
+            callback (callable, optional): Function called after each epoch with
+                (model, epoch_loss, component_losses).
             
         Returns:
             loss_log: a list containing the training losses on each epoch.
@@ -228,12 +231,15 @@ class TRep:
                 print(f"Epoch #{self.n_epochs}: loss={cum_loss:.6f}")
                 if verbose >= 2:
                     component_str = ", ".join(
-                        f\"{key}={avg_component_losses[key]:.6f}\"
+                        f"{key}={avg_component_losses[key]:.6f}"
                         for key in sorted(avg_component_losses.keys())
                     )
-                    print(f\"  components: {component_str}\")
+                    print(f"  components: {component_str}")
+            if callback is not None:
+                callback(self, cum_loss, avg_component_losses)
             self.n_epochs += 1
 
+        self.optimizer_state = optimizer.state_dict()
         return self.loss_log
     
     def _eval_with_pooling(
@@ -504,4 +510,41 @@ class TRep:
         '''
         state_dict = torch.load(fn, map_location=self.device)
         self.net.load_state_dict(state_dict)
+
+    def save_state(self, fn):
+        ''' Save model, optimizer, and training history to a file.
+
+        Args:
+            fn (str): filename.
+        '''
+        torch.save(
+            {
+                'net': self.net.state_dict(),
+                'base_net': self._net.state_dict(),
+                'optimizer_state': self.optimizer_state,
+                'n_epochs': self.n_epochs,
+                'n_iters': self.n_iters,
+                'loss_log': self.loss_log,
+                'component_loss_log': self.component_loss_log,
+            },
+            fn,
+        )
+
+    def load_state(self, fn):
+        ''' Load model, optimizer, and training history from a file.
+
+        Args:
+            fn (str): filename.
+        '''
+        state = torch.load(fn, map_location=self.device)
+        if 'base_net' in state:
+            self._net.load_state_dict(state['base_net'])
+            self.net.update_parameters(self._net)
+        if 'net' in state:
+            self.net.load_state_dict(state['net'])
+        self.optimizer_state = state.get('optimizer_state')
+        self.n_epochs = state.get('n_epochs', self.n_epochs)
+        self.n_iters = state.get('n_iters', self.n_iters)
+        self.loss_log = state.get('loss_log', self.loss_log)
+        self.component_loss_log = state.get('component_loss_log', self.component_loss_log)
     
