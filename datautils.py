@@ -179,3 +179,164 @@ def gen_ano_train_data(all_train_data):
         pretrain_data.append(train_data)
     pretrain_data = np.expand_dims(np.stack(pretrain_data), 2)
     return pretrain_data
+
+
+def load_npz_array(path, key=None):
+    """
+        Load a custom (N, T, C) numpy array from a .npz file.
+
+    Args:
+        path (str): Path to the .npz file on disk.
+        key (str, optional): Name of the array to load. If None, tries 'data'
+            or uses the single array found in the file.
+
+    Returns:
+        np.ndarray: Array with shape (N, T, C).
+    """
+    with np.load(path) as data:
+        if key is None:
+            if 'data' in data:
+                key = 'data'
+            elif len(data.files) == 1:
+                key = data.files[0]
+            else:
+                raise ValueError(
+                    "NPZ contains multiple arrays; specify which one to load via 'key'."
+                )
+        array = data[key]
+
+    if array.ndim != 3:
+        raise ValueError(f"Expected a 3D array with shape (N, T, C). Got shape {array.shape}.")
+    return array
+
+
+def save_npz_array(path, array, key='data'):
+    """
+        Save a numpy array to a .npz file.
+
+    Args:
+        path (str): Output path for the .npz file.
+        array (np.ndarray): Array to save.
+        key (str): Name of the array inside the .npz archive.
+    """
+    np.savez(path, **{key: array})
+
+
+def save_encoded_with_labels(path, representations, labels, repr_key='reprs', label_key='labels'):
+    """
+        Save encoded representations alongside labels to a .npz file.
+
+    Args:
+        path (str): Output path for the .npz file.
+        representations (np.ndarray): Encoded representations array.
+        labels (np.ndarray): Labels corresponding to the representations.
+        repr_key (str): Name of the representations array inside the archive.
+        label_key (str): Name of the labels array inside the archive.
+    """
+    np.savez(path, **{repr_key: representations, label_key: labels})
+
+
+def validate_timeseries_array(array, name='data'):
+    """
+        Validate that an array is a 3D time-series tensor.
+
+    Args:
+        array (np.ndarray): Array to validate.
+        name (str): Name used in error messages.
+    """
+    if not isinstance(array, np.ndarray):
+        raise TypeError(f"{name} must be a numpy array.")
+    if array.ndim != 3:
+        raise ValueError(f"{name} must have shape (N, T, C). Got shape {array.shape}.")
+
+
+def summarize_timeseries_array(array):
+    """
+        Summarize basic statistics for a (N, T, C) array.
+
+    Returns:
+        dict: Summary containing shape, missing ratio, and per-channel stats.
+    """
+    validate_timeseries_array(array)
+    nan_mask = np.isnan(array)
+    missing_ratio = nan_mask.mean()
+    per_channel = {}
+    for channel in range(array.shape[2]):
+        channel_data = array[:, :, channel]
+        per_channel[channel] = {
+            'mean': np.nanmean(channel_data),
+            'std': np.nanstd(channel_data),
+            'min': np.nanmin(channel_data),
+            'max': np.nanmax(channel_data),
+        }
+    return {
+        'shape': array.shape,
+        'missing_ratio': missing_ratio,
+        'per_channel': per_channel,
+    }
+
+
+def split_timeseries_array(
+    array,
+    labels=None,
+    train_ratio=0.8,
+    val_ratio=0.1,
+    test_ratio=0.1,
+    axis=0,
+    shuffle=True,
+    seed=1234,
+):
+    """
+        Split a time-series array (and optional labels) into train/val/test splits.
+
+    Args:
+        array (np.ndarray): Array to split.
+        labels (np.ndarray, optional): Labels aligned with the split axis.
+        train_ratio (float): Fraction for the training split.
+        val_ratio (float): Fraction for the validation split.
+        test_ratio (float): Fraction for the test split.
+        axis (int): Axis to split along (0 for instances, 1 for time).
+        shuffle (bool): Whether to shuffle before splitting (only when axis=0).
+        seed (int): Random seed used for shuffling.
+
+    Returns:
+        tuple: (train, val, test) or (train, val, test, train_labels, val_labels, test_labels)
+    """
+    validate_timeseries_array(array)
+    if not np.isclose(train_ratio + val_ratio + test_ratio, 1.0):
+        raise ValueError("train_ratio + val_ratio + test_ratio must sum to 1.0.")
+    if axis not in (0, 1):
+        raise ValueError("axis must be 0 (instances) or 1 (time).")
+
+    length = array.shape[axis]
+    indices = np.arange(length)
+
+    if axis == 0 and shuffle:
+        rng = np.random.default_rng(seed)
+        rng.shuffle(indices)
+
+    train_end = int(length * train_ratio)
+    val_end = train_end + int(length * val_ratio)
+    train_idx = indices[:train_end]
+    val_idx = indices[train_end:val_end]
+    test_idx = indices[val_end:]
+
+    if axis == 0:
+        train = array[train_idx]
+        val = array[val_idx]
+        test = array[test_idx]
+    else:
+        train = array[:, train_idx]
+        val = array[:, val_idx]
+        test = array[:, test_idx]
+
+    if labels is None:
+        return train, val, test
+
+    labels = np.asarray(labels)
+    if labels.shape[0] != length:
+        raise ValueError("Labels must align with the split axis length.")
+    train_labels = labels[train_idx]
+    val_labels = labels[val_idx]
+    test_labels = labels[test_idx]
+    return train, val, test, train_labels, val_labels, test_labels
