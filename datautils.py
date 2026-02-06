@@ -179,3 +179,44 @@ def gen_ano_train_data(all_train_data):
         pretrain_data.append(train_data)
     pretrain_data = np.expand_dims(np.stack(pretrain_data), 2)
     return pretrain_data
+
+
+def load_npz_array(path, key=None):
+    """
+        Load a custom (N, T, C) numpy array from a .npz file.
+
+    Args:
+        path (str): Path to the .npz file on disk.
+        key (str, optional): Name of the array to load. If None, tries 'data'
+            or uses the single array found in the file.
+
+    Returns:
+        np.ndarray: Array with shape (N, T, C).
+    """
+    with np.load(path) as data:
+        if key is None:
+            if 'data' in data:
+                key = 'data'
+            elif len(data.files) == 1:
+                key = data.files[0]
+            else:
+                raise ValueError(
+                    "NPZ contains multiple arrays; specify which one to load via 'key'."
+                )
+        array = data[key]
+
+    if array.ndim != 3:
+        raise ValueError(f"Expected a 3D array with shape (N, T, C). Got shape {array.shape}.")
+    return array
+
+
+def save_npz_array(path, array, key='data'):
+    """
+        Save a numpy array to a .npz file.
+
+    Args:
+        path (str): Output path for the .npz file.
+        array (np.ndarray): Array to save.
+        key (str): Name of the array inside the .npz archive.
+    """
+    np.savez(path, **{key: array})

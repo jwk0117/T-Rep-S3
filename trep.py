@@ -27,6 +27,7 @@ class TRep:
         task_weights=None,
         max_train_length=None,
         temporal_unit=0,
+        grad_clip=1.0,
     ):
         ''' Initialize a TRep model.
         
@@ -43,6 +44,7 @@ class TRep:
             Task weights (dict): The weights to assign to each pretext task during training.
             max_train_length (Union[int, NoneType]): The maximum allowed sequence length for training. For sequence with a length greater than <max_train_length>, it would be cropped into some sequences, each of which has a length less than <max_train_length>.
             temporal_unit (int): The minimum unit to perform temporal contrast. When training on a very long sequence, this param helps to reduce the cost of time and memory.
+            grad_clip (Union[float, NoneType]): Max norm for gradient clipping. Set to None to disable.
         '''
         
         super().__init__()
@@ -52,6 +54,7 @@ class TRep:
         self.max_train_length = max_train_length
         self.temporal_unit = temporal_unit
         self.time_embedding = time_embedding
+        self.grad_clip = grad_clip
         self._net = TSEncoder(
             input_dims=input_dims,
             output_dims=output_dims,
@@ -89,6 +92,8 @@ class TRep:
         
         self.n_epochs = 0
         self.n_iters = 0
+        self.loss_log = []
+        self.component_loss_log = {key: [] for key in self.task_weights}
     
     def fit(self, train_data, n_epochs=None, n_iters=None, verbose=0):
         ''' Training the TRep model.
@@ -127,7 +132,6 @@ class TRep:
         train_loader = DataLoader(train_dataset, batch_size=min(self.batch_size, len(train_dataset)), shuffle=True, drop_last=True)
         optimizer = torch.optim.AdamW(self._net.parameters(), lr=self.lr)
         
-        loss_log = []
         train_start = time.time()
         while True:
             if n_epochs is not None and self.n_epochs >= n_epochs:
@@ -135,6 +139,7 @@ class TRep:
             
             cum_loss = 0
             n_epoch_iters = 0
+            cum_component_losses = {key: 0.0 for key in self.task_weights}
             
             interrupted = False
             for batch in train_loader:
@@ -183,7 +188,7 @@ class TRep:
                 if tau2 is not None:
                     tau2 = tau2[:, :crop_l]
                 
-                loss = hierarchical_contrastive_loss(
+                loss, component_losses = hierarchical_contrastive_loss(
                     out1,
                     out2,
                     tau1,
@@ -191,14 +196,19 @@ class TRep:
                     tembed_pred_task_head=self.tembed_pred_task_head,
                     tembed_jsd_task_head=self.tembed_jsd_task_head,
                     temporal_unit=self.temporal_unit,
-                    weights=self.task_weights
+                    weights=self.task_weights,
+                    return_components=True,
                 )
                 
                 loss.backward()
+                if self.grad_clip is not None:
+                    torch.nn.utils.clip_grad_norm_(self._net.parameters(), self.grad_clip)
                 optimizer.step()
                 self.net.update_parameters(self._net)
                     
                 cum_loss += loss.item()
+                for key, value in component_losses.items():
+                    cum_component_losses[key] += value.item()
                 n_epoch_iters += 1
                 
                 self.n_iters += 1
@@ -207,12 +217,24 @@ class TRep:
                 break
             
             cum_loss /= n_epoch_iters
-            loss_log.append(cum_loss)
-            if verbose >= 2:
-                print(f"Epoch #{self.n_epochs}: loss={cum_loss}")
+            avg_component_losses = {
+                key: value / n_epoch_iters
+                for key, value in cum_component_losses.items()
+            }
+            self.loss_log.append(cum_loss)
+            for key in sorted(avg_component_losses.keys()):
+                self.component_loss_log[key].append(avg_component_losses[key])
+            if verbose >= 1:
+                print(f"Epoch #{self.n_epochs}: loss={cum_loss:.6f}")
+                if verbose >= 2:
+                    component_str = ", ".join(
+                        f\"{key}={avg_component_losses[key]:.6f}\"
+                        for key in sorted(avg_component_losses.keys())
+                    )
+                    print(f\"  components: {component_str}\")
             self.n_epochs += 1
 
-        return loss_log
+        return self.loss_log
     
     def _eval_with_pooling(
             self,
