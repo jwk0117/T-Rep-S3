@@ -208,3 +208,15 @@ def load_npz_array(path, key=None):
     if array.ndim != 3:
         raise ValueError(f"Expected a 3D array with shape (N, T, C). Got shape {array.shape}.")
     return array
+
+
+def save_npz_array(path, array, key='data'):
+    """
+        Save a numpy array to a .npz file.
+
+    Args:
+        path (str): Output path for the .npz file.
+        array (np.ndarray): Array to save.
+        key (str): Name of the array inside the .npz archive.
+    """
+    np.savez(path, **{key: array})

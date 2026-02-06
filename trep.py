@@ -27,6 +27,7 @@ class TRep:
         task_weights=None,
         max_train_length=None,
         temporal_unit=0,
+        grad_clip=1.0,
     ):
         ''' Initialize a TRep model.
         
@@ -43,6 +44,7 @@ class TRep:
             Task weights (dict): The weights to assign to each pretext task during training.
             max_train_length (Union[int, NoneType]): The maximum allowed sequence length for training. For sequence with a length greater than <max_train_length>, it would be cropped into some sequences, each of which has a length less than <max_train_length>.
             temporal_unit (int): The minimum unit to perform temporal contrast. When training on a very long sequence, this param helps to reduce the cost of time and memory.
+            grad_clip (Union[float, NoneType]): Max norm for gradient clipping. Set to None to disable.
         '''
         
         super().__init__()
@@ -52,6 +54,7 @@ class TRep:
         self.max_train_length = max_train_length
         self.temporal_unit = temporal_unit
         self.time_embedding = time_embedding
+        self.grad_clip = grad_clip
         self._net = TSEncoder(
             input_dims=input_dims,
             output_dims=output_dims,
@@ -198,6 +201,8 @@ class TRep:
                 )
                 
                 loss.backward()
+                if self.grad_clip is not None:
+                    torch.nn.utils.clip_grad_norm_(self._net.parameters(), self.grad_clip)
                 optimizer.step()
                 self.net.update_parameters(self._net)
                     
