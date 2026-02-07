@@ -160,7 +160,12 @@ class TRep:
         
         train_dataset = TensorDataset(torch.from_numpy(train_data).to(torch.float))
         train_loader = DataLoader(train_dataset, batch_size=min(self.batch_size, len(train_dataset)), shuffle=True, drop_last=True)
-        optimizer = torch.optim.AdamW(self._net.parameters(), lr=self.lr)
+        optimizer = torch.optim.AdamW(
+            list(self._net.parameters()) +
+            list(self.tembed_jsd_task_head.parameters()) +
+            list(self.tembed_pred_task_head.parameters()),
+            lr=self.lr
+        )
         
         train_start = time.time()
         while True:
@@ -232,7 +237,12 @@ class TRep:
                 
                 loss.backward()
                 if self.grad_clip is not None:
-                    torch.nn.utils.clip_grad_norm_(self._net.parameters(), self.grad_clip)
+                    all_params = (
+                        list(self._net.parameters()) +
+                        list(self.tembed_jsd_task_head.parameters()) +
+                        list(self.tembed_pred_task_head.parameters())
+                    )
+                    torch.nn.utils.clip_grad_norm_(all_params, self.grad_clip)
                 optimizer.step()
                 self.net.update_parameters(self._net)
                     

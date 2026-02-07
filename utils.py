@@ -206,12 +206,12 @@ def find_closest_train_segment(train_data, test_data, step=1, squared_dist=True)
     dist = np.zeros((B, (T - t) // step))
     for i in range(0, T - t, step):
         if squared_dist:
-            dist[:, i] = np.abs(np.mean(np.sum((train_data[:, i: i + t, :] - test_data[:, :, :]) ** 2, axis=1), axis=1))
+            dist[:, i // step] = np.abs(np.mean(np.sum((train_data[:, i: i + t, :] - test_data[:, :, :]) ** 2, axis=1), axis=1))
         else:
-            dist[:, i] = np.abs(np.mean(np.sum(train_data[:, i: i + t, :] - test_data[:, :, :], axis=1), axis=1))
+            dist[:, i // step] = np.abs(np.mean(np.sum(train_data[:, i: i + t, :] - test_data[:, :, :], axis=1), axis=1))
 
-        min_dist = np.argmin(dist, axis=1)
-        seq_starts = (step * min_dist)[..., None]
+    min_dist = np.argmin(dist, axis=1)
+    seq_starts = (step * min_dist)[..., None]
     
     # Get time indices for each segment
     time_indices = (np.arange(t) + seq_starts).astype(np.int32)[..., None]

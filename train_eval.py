@@ -36,7 +36,7 @@ def save_checkpoint_callback(
     unit='epoch'
 ):
     assert unit in ('epoch', 'iter')
-    def callback(model, loss):
+    def callback(model, loss, component_losses):
         n = model.n_epochs if unit == 'epoch' else model.n_iters
         if n % save_every == 0:
             model.save(f'{run_dir}/model_{n}.pkl')
@@ -75,7 +75,6 @@ def train_trep(train_data, device, config, run_dir, verbose, args):
         verbose=verbose,
     )
 
-    run_dir = f"training/{run_dir}"
     if not os.path.exists(run_dir):
         os.makedirs(run_dir)
     model.save(f'{run_dir}/model.pt')

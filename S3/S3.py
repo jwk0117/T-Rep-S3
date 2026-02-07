@@ -22,29 +22,35 @@ class S3(nn.Module):
         self.S3_layers = nn.ModuleList()
         next_segment_num = initial_num_segments
         for i in range(0, num_layers):
+            if segments_per_layer is not None:
+                next_segment_num = segments_per_layer[i]
             print("Building S3 Layer", i)
-            self.S3_layers += [S3Layer(num_segments=next_segment_num, shuffle_vector_dim=shuffle_vector_dim, use_conv_w_avg=use_conv_w_avg, 
+            self.S3_layers += [S3Layer(num_segments=next_segment_num, shuffle_vector_dim=shuffle_vector_dim, use_conv_w_avg=use_conv_w_avg,
                initialization_type=initialization_type, use_stitch=use_stitch)]
-            next_segment_num = int(next_segment_num * segment_multiplier)
-            if next_segment_num==0:
-                next_segment_num=1
+            if segments_per_layer is None:
+                next_segment_num = int(next_segment_num * segment_multiplier)
+                if next_segment_num==0:
+                    next_segment_num=1
     
     def forward(self, x):
         x_copy = x.clone()
         for S3_layer in self.S3_layers:
             # Only process if the input sequence length is greater or equal to the number of segments
             if x_copy.shape[1] >= S3_layer.num_segments:
-                # Calculate how many time steps to truncate
-                sample_num_to_truncate = x_copy.shape[1] % S3_layer.num_segments
-                # If truncation is needed, slice the input to make it divisible by num_segments
-                if sample_num_to_truncate > 0:
-                    x_copy = x_copy[:, sample_num_to_truncate:, :]
+                remainder = x_copy.shape[1] % S3_layer.num_segments
+                pad_size = 0
+                # If not divisible, pad at the beginning to make it divisible
+                if remainder > 0:
+                    pad_size = S3_layer.num_segments - remainder
+                    padding = x_copy[:, :1, :].expand(-1, pad_size, -1)
+                    x_copy = torch.cat([padding, x_copy], dim=1)
 
                 # Pass through the current S3 layer
                 x_copy = S3_layer(x_copy)
-        # Concatenate the truncated part of the original input with the processed part
-        if x.shape[1] > x_copy.shape[1]:
-            x_copy = torch.cat([x[:, 0:x.shape[1] - x_copy.shape[1], :], x_copy], dim=1)
+
+                # Remove the padding to restore original length
+                if pad_size > 0:
+                    x_copy = x_copy[:, pad_size:, :]
 
         return x_copy
 

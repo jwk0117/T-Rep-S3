@@ -30,6 +30,7 @@ class T2vSin(nn.Module):
         out = self.sigmoid(out)
         if self.normalise:
             return out / torch.sum(out, dim=-1)[..., None]
+        return out
 
 
 class T2vCos(nn.Module):
@@ -111,6 +112,7 @@ class LearnablePositionalEncodingBig(nn.Module):
         out = self.dropout(self.fc(x))
         if self.normalise:
             return out / torch.sum(out, dim=-1)[..., None]
+        return out
 
 
 class GaussianPositionalEncoding(nn.Module):
