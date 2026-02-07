@@ -28,6 +28,15 @@ class TRep:
         max_train_length=None,
         temporal_unit=0,
         grad_clip=1.0,
+        use_s3=False,
+        s3_layers=1,
+        s3_initial_num_segments=2,
+        s3_shuffle_vector_dim=1,
+        s3_segment_multiplier=1,
+        s3_segments_per_layer=None,
+        s3_use_conv_w_avg=True,
+        s3_initialization_type="kaiming",
+        s3_use_stitch=True,
     ):
         ''' Initialize a TRep model.
         
@@ -45,6 +54,15 @@ class TRep:
             max_train_length (Union[int, NoneType]): The maximum allowed sequence length for training. For sequence with a length greater than <max_train_length>, it would be cropped into some sequences, each of which has a length less than <max_train_length>.
             temporal_unit (int): The minimum unit to perform temporal contrast. When training on a very long sequence, this param helps to reduce the cost of time and memory.
             grad_clip (Union[float, NoneType]): Max norm for gradient clipping. Set to None to disable.
+            use_s3 (bool): Whether to enable S3 preprocessing at the input level.
+            s3_layers (int): Number of stacked S3 layers to apply.
+            s3_initial_num_segments (int): Number of segments for the first S3 layer.
+            s3_shuffle_vector_dim (int): Dimensionality of the S3 shuffle vector.
+            s3_segment_multiplier (float): Multiplier for segments in each S3 layer.
+            s3_segments_per_layer (List[int], optional): Explicit segments per S3 layer.
+            s3_use_conv_w_avg (bool): Use convolution-based weighted average in S3.
+            s3_initialization_type (str): Initialization type for S3 shuffle vectors.
+            s3_use_stitch (bool): Whether to stitch original and shuffled sequences in S3.
         '''
         
         super().__init__()
@@ -62,6 +80,15 @@ class TRep:
             depth=depth,
             time_embedding=self.time_embedding,
             time_embedding_dim=time_embedding_dim,
+            use_s3=use_s3,
+            s3_layers=s3_layers,
+            s3_initial_num_segments=s3_initial_num_segments,
+            s3_shuffle_vector_dim=s3_shuffle_vector_dim,
+            s3_segment_multiplier=s3_segment_multiplier,
+            s3_segments_per_layer=s3_segments_per_layer,
+            s3_use_conv_w_avg=s3_use_conv_w_avg,
+            s3_initialization_type=s3_initialization_type,
+            s3_use_stitch=s3_use_stitch,
         ).to(self.device)
         self.net = torch.optim.swa_utils.AveragedModel(self._net)
         self.net.update_parameters(self._net)

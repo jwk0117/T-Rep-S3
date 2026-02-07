@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import numpy as np
 
 from .dilated_conv import DilatedConvEncoder
+from S3 import S3
 from .time_embeddings import (
     LearnablePositionalEncodingSmall,
     LearnablePositionalEncodingBig,
@@ -50,7 +51,16 @@ class TSEncoder(nn.Module):
             depth=10,
             mask_mode='binomial',
             time_embedding=None,
-            time_embedding_dim=64
+            time_embedding_dim=64,
+            use_s3=False,
+            s3_layers=1,
+            s3_initial_num_segments=2,
+            s3_shuffle_vector_dim=1,
+            s3_segment_multiplier=1,
+            s3_segments_per_layer=None,
+            s3_use_conv_w_avg=True,
+            s3_initialization_type="kaiming",
+            s3_use_stitch=True,
         ):
         super().__init__()
         self.input_dims = input_dims
@@ -59,6 +69,18 @@ class TSEncoder(nn.Module):
         self.mask_mode = mask_mode
         fc_dim = hidden_dims if isinstance(hidden_dims, int) else hidden_dims[0]
         self.input_fc = nn.Linear(input_dims, fc_dim)
+        self.s3 = None
+        if use_s3:
+            self.s3 = S3(
+                num_layers=s3_layers,
+                initial_num_segments=s3_initial_num_segments,
+                shuffle_vector_dim=s3_shuffle_vector_dim,
+                segment_multiplier=s3_segment_multiplier,
+                segments_per_layer=s3_segments_per_layer,
+                use_conv_w_avg=s3_use_conv_w_avg,
+                initialization_type=s3_initialization_type,
+                use_stitch=s3_use_stitch,
+            )
 
         if time_embedding:
             self.time_embedding = time_embeddings[time_embedding](in_features=1, out_features=time_embedding_dim)
@@ -85,6 +107,8 @@ class TSEncoder(nn.Module):
     def forward(self, x, time_vec, mask=None):  # x: B x T x input_dims
         nan_mask = ~x.isnan().any(axis=-1)
         x[~nan_mask] = 0
+        if self.s3 is not None:
+            x = self.s3(x)
         x = self.input_fc(x)  # B x T x Ch
         
         # generate & apply mask
