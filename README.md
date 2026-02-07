@@ -1,101 +1,127 @@
-# T-Rep
+# T-Rep for Neuroscience Time-Series
 
-This repository contains the official implementation for the paper ["T-Rep: Representation Learning for Time-Series Using Time-Embeddings"](https://arxiv.org/abs/2310.04486).
+T-Rep is a representation-learning model for time-series using time embeddings, with an interface that fits naturally into neuroscience workflows (EEG, ECoG, LFP, calcium imaging traces, spike-rate sequences). This repository contains the official implementation for ["T-Rep: Representation Learning for Time-Series Using Time-Embeddings"](https://arxiv.org/abs/2310.04486), with optional S3 input-level preprocessing for robust segment shuffling.
 
-It was built on top of the [TS2Vec repository](https://github.com/yuezhihan/ts2vec), which provided a very good start point for both model development and benchmarking. A big thanks to the authors!
+## Who this is for
 
-## Requirements
+If you are working with trial-based or continuous neural recordings and want a single encoder that can power decoding, clustering, forecasting, or anomaly detection, this project is for you. Typical use cases include:
 
-The dependencies can be installed by:
+- Trial-level classification (e.g., stimulus decoding, behavioral state inference)
+- Event detection (e.g., onset detection, transient discovery)
+- Representation learning for downstream regressors or classifiers
+- Forecasting or anomaly detection on continuous recordings
+
+## Data expectations
+
+T-Rep expects `np.ndarray` inputs with shape `(N, T, C)`:
+
+- `N`: number of trials, sessions, or instances
+- `T`: number of time steps
+- `C`: number of channels (e.g., sensors, regions, neurons)
+
+Missing data should be represented as `NaN` values. If you have irregular sampling or gaps, pad with `NaN` to align sequences.
+
+Example: if you have trial-aligned ECoG with 80 trials, 2000 time steps, and 64 channels, your array should have shape `(80, 2000, 64)`.
+
+## Install
+
 ```bash
 pip install -r requirements.txt
 ```
-The repository is not yet compatible with Pytorch 2.0. It includes specific (not always the latest) versions of packages, so we recommend having a dedicated virtual environment for this repo.
 
-## Usage
+The repository is not yet compatible with PyTorch 2.0. We recommend a dedicated virtual environment with the pinned dependency versions.
 
-### Command line
+## Neuroscience Quickstart
 
-To train and evaluate T-Rep on one of the supported datasets (see below), run the following command:
-
-```train & evaluate
-python train.py <dataset_name> <run_name> --loader <loader> --repr-dims <repr_dims> --eval
-```
-The detailed descriptions about the arguments are as following:
-| Parameter name | Description of parameter |
-| --- | --- |
-| dataset_name | The dataset name |
-| run_name | The folder name used to save model, output and evaluation metrics. This can be set to any word |
-| loader | The data loader used to load the dataset. This can be set to `UCR`, `UEA`, `forecast_csv`, `forecast_csv_univar`, `anomaly`, or `anomaly_coldstart` |
-| repr_dims | The representation dimensions (defaults to 320) |
-| eval | Whether to perform evaluation after training |
-
-(For descriptions of more arguments, run `python train.py -h`.)
-
-After training and evaluation, the trained encoder, output and evaluation metrics can be found in `training/DatasetName__RunName_DateTime/`. 
-
-### Code
-
-A detailed tutorial of how to use T-Rep is provided in ``full_tutorial.ipynb``, but we showcase below the simple sklearn-like interface used by T-Rep.
+Below is a minimal end-to-end example. Customize preprocessing based on your modality.
 
 ```python
-from sklearn.svm import SVC
-from sklearn.metrics import accuracy_score
+import numpy as np
+import torch
 
 from trep import TRep
-import datautils
 
-# Load the ECG200 dataset from UCR archive
-train_data, train_labels, test_data, test_labels = datautils.load_UCR('ECG200')
-# (Both train_data and test_data have a shape of n_instances x n_timestamps x n_features)
+# Example: load an .npz with your neural data stored as "data"
+data = np.load("my_neuro_dataset.npz")["data"]  # shape (N, T, C)
 
-# Instantiate and train T-Rep
-trep = TRep(
-    input_dims=1,
-    device=0,
-    time_embedding='t2v_sin',
-    output_dims=128
+# Optional preprocessing (example ideas):
+# - bandpass filtering (EEG/ECoG)
+# - z-score per channel
+data = (data - np.nanmean(data, axis=(0, 1), keepdims=True)) / (
+    np.nanstd(data, axis=(0, 1), keepdims=True) + 1e-6
 )
-loss_log = trep.fit(train_data, n_epochs=80, verbose=1)
 
-# Compute timestamp-level representations for test set
-train_repr = trep.encode(train_data)  # n_instances x n_timestamps x output_dims
-test_repr = trep.encode(test_data)  # n_instances x n_timestamps x output_dims
+model = TRep(
+    input_dims=data.shape[-1],
+    output_dims=128,
+    time_embedding="t2v_sin",
+    device="cuda" if torch.cuda.is_available() else "cpu",
+)
 
-
-# Classify the learned representations using an SVM
-svm_classifier = SVC(kernel='linear')
-svm_classifier.fit(train_repr, train_labels)
-y_pred = svm_classifier.predict(test_repr)
-accuracy = accuracy_score(test_labels, y_pred)
+loss_log = model.fit(data, n_epochs=50, verbose=1)
+reprs = model.encode(data)  # shape (N, T, output_dims)
 ```
 
-This is all you need to know to use T-Rep. The produced `np.ndarray` of representations can then be used as inputs for any task ranging from classification, clustering, forecasting, to anomaly detection etc.
+## Optional S3 front-end (input-level shuffling)
 
-## Reproduction of Results
+S3 is an input-level module that stochastically reorders segments to encourage invariances to temporal jitter and local artifacts. For neural data with transient noise or timing jitter, S3 can act as a robustifying front-end.
 
+```python
+model = TRep(
+    input_dims=data.shape[-1],
+    output_dims=128,
+    time_embedding="t2v_sin",
+    use_s3=True,
+    s3_layers=2,  # 1–3 layers recommended
+    s3_initial_num_segments=4,
+)
+```
 
-### Data
+## Task guidance for neuroscience data
 
-The datasets used in the paper to evaluate the model can be downloaded from:
+- **Trial classification / decoding**: encode representations per trial (e.g., mean pool over time or use a temporal classifier on `reprs`).
+- **Event detection / anomaly detection**: use fine-grained, time-step representations and apply a per-time-step detector.
+- **Forecasting**: train on earlier time spans and encode later spans with correct time indices to avoid time-embedding drift.
 
-* [128 UCR datasets](https://www.cs.ucr.edu/~eamonn/time_series_data_2018) should be put into `datasets/UCR/` so that each data file can be located by `datasets/UCR/<dataset_name>/<dataset_name>_*.csv`.
-* [30 UEA datasets](http://www.timeseriesclassification.com) should be put into `datasets/UEA/` so that each data file can be located by `datasets/UEA/<dataset_name>/<dataset_name>_*.arff`.
-* [3 ETT datasets](https://github.com/zhouhaoyi/ETDataset) should be placed at `datasets/ETTh1.csv`, `datasets/ETTh2.csv` and `datasets/ETTm1.csv`.
-* [Yahoo dataset](https://webscope.sandbox.yahoo.com/catalog.php?datatype=s&did=70) should be preprocessed using `datasets/preprocess_yahoo.py` and placed at `datasets/yahoo.pkl`.
-* [Sepsis dataset](https://physionet.org/content/challenge-2019/1.0.0/training/#files-panel) files should be placed under `datasets/Sepsis` and preprocessed using `datasets/preprocess_sepsis.py`.
+If your train/test split is time-based, preserve the original time indices to keep time embeddings consistent.
 
-### Runnning Experiments
+## CLI usage (for reproduction)
 
-All functions necessary to reproduce experiments and results shown in the T-Rep paper are provided in this repository. For reproduction and experiment details, please refer directly to the paper (Appendix A.2).
+To train and evaluate on supported benchmark datasets:
 
-- **Classification, Forecasting, Anomaly Detection**: To reproduce experiments for these tasks, you can use functions in `evaluation.py`.
-- **Clustering**: Clustering experiments can be reproduced using functions in the `clustering.py` file. Example parameterisation and function calls are provided at the bottom of the file, in the `__main__` function.
-- **Sepsis**: The code to reproduce Sepsis anomaly detection results can be found in the `sepsis_ad.py` file. An example function call is given in the `__main__` function.
+```bash
+python train.py <dataset_name> <run_name> --loader <loader> --repr-dims <repr_dims> --eval
+```
 
-## Citations
+Supported loaders include `UCR`, `UEA`, `forecast_csv`, `forecast_csv_univar`, `anomaly`, and `anomaly_coldstart`. For a full list of arguments, run `python train.py -h`.
 
-If this work has proven useful or you are using this repository for your project, please cite using
+## Optional dependencies for neuroscience workflows
+
+These packages are not required by T-Rep but are commonly useful:
+
+- `mne`: EEG/MEG preprocessing and filtering
+- `scipy`: signal processing utilities
+- `h5py`: working with `.h5` datasets
+
+## Reproducing paper results (benchmark datasets)
+
+If you want to reproduce the original paper results, the benchmark datasets can be downloaded as follows:
+
+- [128 UCR datasets](https://www.cs.ucr.edu/~eamonn/time_series_data_2018) → `datasets/UCR/<dataset_name>/<dataset_name>_*.csv`
+- [30 UEA datasets](http://www.timeseriesclassification.com) → `datasets/UEA/<dataset_name>/<dataset_name>_*.arff`
+- [3 ETT datasets](https://github.com/zhouhaoyi/ETDataset) → `datasets/ETTh1.csv`, `datasets/ETTh2.csv`, `datasets/ETTm1.csv`
+- [Yahoo dataset](https://webscope.sandbox.yahoo.com/catalog.php?datatype=s&did=70) → preprocess with `datasets/preprocess_yahoo.py`
+- [Sepsis dataset](https://physionet.org/content/challenge-2019/1.0.0/training/#files-panel) → preprocess with `datasets/preprocess_sepsis.py`
+
+Evaluation scripts are in:
+
+- `evaluation.py` for classification, forecasting, anomaly detection
+- `clustering.py` for clustering
+- `sepsis_ad.py` for sepsis anomaly detection
+
+## Citation
+
+If this work is useful in your research, please cite:
 
 ```bibtex
 @inproceedings{
@@ -107,5 +133,4 @@ If this work has proven useful or you are using this repository for your project
     url={https://openreview.net/forum?id=3y2TfP966N}
 }
 ```
-
 
