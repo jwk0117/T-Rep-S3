@@ -109,6 +109,12 @@ class TSEncoder(nn.Module):
         x[~nan_mask] = 0
         if self.s3 is not None:
             x = self.s3(x)
+            # Propagate nan_mask through the same S3 shuffling so it tracks
+            # where NaN positions end up after segment reordering and stitching.
+            nan_mask_float = nan_mask.unsqueeze(-1).float()
+            nan_mask_float = self.s3(nan_mask_float)
+            nan_mask = nan_mask_float.squeeze(-1) > 0.5
+            x[~nan_mask] = 0
         x = self.input_fc(x)  # B x T x Ch
         
         # generate & apply mask
